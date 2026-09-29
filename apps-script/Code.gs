@@ -1,8 +1,9 @@
 /**
- * Notes de frais DHC — script Google Apps Script — version 1.2
+ * Notes de frais DHC — script Google Apps Script — version 1.3
  *  - envoi des notes validées par email (administrateurs)
  *  - réglages depuis l'onglet Paramètres de l'application (administrateurs)
  *  - lecture des tickets par Claude (membres de l'équipe, avec plafond quotidien)
+ *  - rappel mensuel par email à l'administrateur (à installer une fois : fonction installerRappel)
  *
  * Installation : voir INSTALLATION.md. Déployer en « Application web » (Exécuter en tant que : Moi ; Accès : Tout le monde).
  *
@@ -11,13 +12,14 @@
  *  - la clé API Claude et l'adresse de destination sont rangées dans les propriétés du script,
  *    jamais renvoyées à l'application (seuls les 4 derniers caractères de la clé sont affichés).
  */
-const VERSION_SCRIPT = '1.2';
+const VERSION_SCRIPT = '1.3';
 const CONFIG = {
   FIREBASE_API_KEY: 'AIzaSyBOr9WvhZKujhKsq7BfamcOI1JMIxEpQQw',      // identique à apiKey dans index.html
   FIREBASE_PROJECT_ID: 'notes-frais-dhc',   // identique à projectId dans index.html
   ADMIN_EMAIL: 'administration@dreamshomeconcept.com',
   DESTINATAIRE_DEFAUT: 'dreams-home-concept@box.libeo.io',
   NOM_EXPEDITEUR: 'Notes de frais DHC',
+  APP_URL: 'https://dreamshomeconcept.github.io/frais/',   // adresse de l'application (rappel mensuel)
   MODELE: 'claude-haiku-4-5-20251001',
   PLAFOND_DEFAUT: 30,
   TAILLE_MAX_PDF: 20 * 1024 * 1024,   // limite Gmail : 25 Mo
@@ -96,7 +98,8 @@ function jourCourant() { return Utilities.formatDate(new Date(), 'Europe/Paris',
 function statut() {
   const cle = props().getProperty('CLAUDE_API_KEY');
   return { ok: true, version: VERSION_SCRIPT, destinataire: destinataire(), plafond: plafond(), modele: CONFIG.MODELE,
-    cleApi: cle ? '…' + cle.slice(-4) : null, lecturesMois: Number(props().getProperty('LECTURES_' + moisCourant())) || 0 };
+    cleApi: cle ? '…' + cle.slice(-4) : null, lecturesMois: Number(props().getProperty('LECTURES_' + moisCourant())) || 0,
+    rappel: rappelInstalle() };
 }
 function reglages(p) {
   if (p.destinataire !== undefined) {
@@ -253,6 +256,36 @@ function appelClaude(cle, corps) {
 /* ---------- Utilitaires ---------- */
 function texte(v, max) { return String(v == null ? '' : v).replace(/[\r\n]+/g, ' ').slice(0, max); }
 function reponse(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
+
+/* ---------- Rappel mensuel ---------- */
+// À lancer UNE fois depuis l'éditeur (menu déroulant des fonctions → installerRappel → Exécuter) :
+// crée un déclencheur le 1er de chaque mois vers 8 h (heure de Paris). Relancer ne crée pas de doublon.
+function installerRappel() {
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'rappelMensuel').forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('rappelMensuel').timeBased().onMonthDay(1).atHour(8).inTimezone('Europe/Paris').create();
+  Logger.log('Rappel mensuel installé : le 1er de chaque mois vers 8 h, email à ' + CONFIG.ADMIN_EMAIL);
+}
+function supprimerRappel() {
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'rappelMensuel').forEach(t => ScriptApp.deleteTrigger(t));
+}
+function rappelInstalle() {
+  try { return ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'rappelMensuel'); }
+  catch (e) { return null; } // autorisation pas encore accordée : lancer installerRappel une fois
+}
+function rappelMensuel() {
+  const d = new Date(); d.setDate(0); // dernier jour du mois écoulé
+  const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  const mois = MOIS[d.getMonth()] + ' ' + d.getFullYear();
+  GmailApp.sendEmail(CONFIG.ADMIN_EMAIL, 'Notes de frais — ouvrir Frais pour envoyer ' + mois,
+    [
+      'Bonjour,', '',
+      'Le mois ' + (/^[aeiou]/.test(mois) ? 'd\'' : 'de ') + mois + ' est terminé.', '',
+      '1. Ouvrez l\'application Frais : ' + CONFIG.APP_URL,
+      '2. Validez ou refusez les dépenses encore « en attente » (onglet À valider).', '',
+      'Dès l\'ouverture, les notes complètes partent seules vers ' + destinataire() + ' (si l\'envoi automatique est activé dans Paramètres → Email).', '',
+      'Rappel automatique du script Notes de frais DHC.'
+    ].join('\n'), { name: CONFIG.NOM_EXPEDITEUR });
+}
 
 // Test manuel depuis l'éditeur : accorde les autorisations (Gmail, appels externes) et envoie un email à vous-même
 function testerAutorisation() {
