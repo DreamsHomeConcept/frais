@@ -1274,7 +1274,9 @@ function vueParametres() {
       `<p class="mut mt">La clé est rangée dans le script Google, jamais dans l'application : personne ne peut la relire ici. Coût indicatif : moins d'un centime par ticket.</p>`;
   } else if (t === "email") {
     const dest = st && !st.erreur ? st.destinataire : c.envoi.destinataire;
-    corps = carte("Envoi des notes validées", kvHtml([["Destinataire", `<b>${esc(dest)}</b>`]]) +
+    const rappel = !st || st.erreur ? "—" : st.rappel === true ? `<span class="badge st-ok">Actif · le 1er du mois vers 8 h</span>`
+      : st.rappel === false || st.rappel === null ? `<span class="badge st-neu">Non installé</span>` : `<span class="badge st-neu">Script v1.3 requis</span>`;
+    corps = carte("Envoi des notes validées", kvHtml([["Destinataire", `<b>${esc(dest)}</b>`], ["Rappel mensuel", rappel]]) +
       `<label class="chk mt"><input type="checkbox" data-pchk="auto" ${c.envoi.auto ? "checked" : ""}> Envoi automatique (mois terminé, plus rien en attente)</label>
        <label class="chk mt"><input type="checkbox" data-pchk="cc" ${c.envoi.cc ? "checked" : ""}> Copie au déclarant</label>` +
       (!scriptUrl() ? `<div class="info mt">Renseigne d'abord l'adresse du script dans Général.</div>` : ""),
