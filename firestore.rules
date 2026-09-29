@@ -51,6 +51,7 @@ service cloud.firestore {
           && request.resource.data.get('validePar', null) == null;
       }
       // Contenu d'une dépense saisie par un déclarant : champs connus, montants cohérents, textes courts
+      // Trajet : 0,85 € par km au plus (7 CV électrique = 0,836 €), à relever si le barème augmente
       function contenuValide() {
         let d = request.resource.data;
         return d.keys().hasOnly(['type', 'date', 'mois', 'categorie', 'description', 'chantier', 'paiement',
@@ -65,7 +66,6 @@ service cloud.firestore {
           && d.get('chantier', '') is string && d.get('chantier', '').size() <= 120
           && d.get('depart', '') is string && d.get('depart', '').size() <= 120
           && d.get('arrivee', '') is string && d.get('arrivee', '').size() <= 120
-          // Trajet : 0,85 € par km au plus (7 CV électrique = 0,836 €) — à relever si le barème augmente
           && (d.get('type', 'frais') != 'ik'
               || (d.kmTotal is number && d.kmTotal > 0 && d.kmTotal <= 4000 && d.montant <= d.kmTotal * 0.85 + 0.01));
       }
