@@ -1,0 +1,134 @@
+rules_version = '2';
+
+// Règles de sécurité — Notes de frais DHC (v2 : contrôle du contenu des dépenses)
+// À coller dans Firebase Console > Firestore Database > Règles, puis « Publier ».
+// L'email ci-dessous doit être identique à ADMIN_EMAIL dans index.html.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function connecte() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function moi() {
+      return request.auth.token.email.lower();
+    }
+    function superAdmin() {
+      return connecte() && moi() == 'administration@dreamshomeconcept.com';
+    }
+    function profil() {
+      return get(/databases/$(database)/documents/users/$(moi())).data;
+    }
+    function membre() {
+      return connecte()
+        && exists(/databases/$(database)/documents/users/$(moi()))
+        && profil().actif == true;
+    }
+    function admin() {
+      return superAdmin() || (membre() && profil().role == 'admin');
+    }
+    function modifiable(statut) {
+      return statut in ['soumise', 'refusee'];
+    }
+
+    // Liste des personnes autorisées (liste blanche)
+    match /users/{email} {
+      allow read: if admin() || (membre() && email == moi());
+      allow create, delete: if admin();
+      // Un déclarant ne peut modifier que ses véhicules
+      allow update: if admin()
+        || (membre() && email == moi()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['vehicules']));
+    }
+
+    // Dépenses et trajets
+    match /depenses/{id} {
+      allow read: if admin() || (membre() && resource.data.owner == moi());
+      // Un déclarant ne peut pas écrire lui-même les champs de validation / remboursement
+      function champsAdminVides() {
+        return request.resource.data.get('remboursement', null) == null
+          && request.resource.data.get('valideLe', null) == null
+          && request.resource.data.get('validePar', null) == null;
+      }
+      // Contenu d'une dépense saisie par un déclarant : champs connus, montants cohérents, textes courts
+      // Trajet : 0,85 € par km au plus (7 CV électrique = 0,836 €), à relever si le barème augmente
+      function contenuValide() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['type', 'date', 'mois', 'categorie', 'description', 'chantier', 'paiement',
+            'ttc', 'tva', 'ht', 'tauxTva', 'tvaManuelle', 'devise', 'montantDevise', 'tauxChange', 'montant', 'sansJustificatif',
+            'depart', 'arrivee', 'km', 'allerRetour', 'kmTotal', 'vehiculeId', 'vehiculeLib', 'cv', 'electrique', 'cumulAvant', 'bareme',
+            'owner', 'ownerNom', 'statut', 'motifRefus', 'valideLe', 'validePar', 'remboursement', 'justif', 'createdAt', 'updatedAt'])
+          && d.montant is number && d.montant > 0 && d.montant <= 10000
+          && d.get('ttc', d.montant) == d.montant
+          && d.date is string && d.mois is string && d.mois.matches('[0-9]{4}-[0-9]{2}')
+          && d.date.matches(d.mois + '-[0-9]{2}')
+          && d.get('description', '') is string && d.get('description', '').size() <= 200
+          && d.get('chantier', '') is string && d.get('chantier', '').size() <= 120
+          && d.get('depart', '') is string && d.get('depart', '').size() <= 120
+          && d.get('arrivee', '') is string && d.get('arrivee', '').size() <= 120
+          && (d.get('type', 'frais') != 'ik'
+              || (d.kmTotal is number && d.kmTotal > 0 && d.kmTotal <= 4000 && d.montant <= d.kmTotal * 0.85 + 0.01));
+      }
+      allow create: if admin()
+        || (membre() && request.resource.data.owner == moi()
+            && request.resource.data.statut == 'soumise' && champsAdminVides() && contenuValide());
+      allow update: if admin()
+        || (membre() && resource.data.owner == moi() && modifiable(resource.data.statut)
+            && request.resource.data.owner == moi()
+            && request.resource.data.statut == 'soumise' && champsAdminVides() && contenuValide());
+      allow delete: if admin()
+        || (membre() && resource.data.owner == moi() && modifiable(resource.data.statut));
+    }
+
+    // Justificatifs (photos compressées), même identifiant que la dépense
+    match /justifs/{id} {
+      function dep() {
+        return /databases/$(database)/documents/depenses/$(id);
+      }
+      // Avant l'écriture : dépense absente (création) ou à moi et encore modifiable
+      function avantOK() {
+        return !exists(dep()) || (get(dep()).data.owner == moi() && modifiable(get(dep()).data.statut));
+      }
+      // Après l'écriture (même lot) : la dépense existe, est à moi et soumise
+      function apresOK() {
+        return getAfter(dep()).data.owner == moi() && getAfter(dep()).data.statut == 'soumise';
+      }
+      // Contenu limité à une image JPEG ou un PDF encodés
+      function justifValide() {
+        return request.resource.data.keys().hasOnly(['owner', 'data', 'mime', 'nom', 'createdAt'])
+          && request.resource.data.data is string
+          && request.resource.data.data.size() < 900000
+          && ((request.resource.data.mime == 'image/jpeg'
+                && request.resource.data.data.matches('data:image/jpeg;base64,[A-Za-z0-9+/=]+'))
+           || (request.resource.data.mime == 'application/pdf'
+                && request.resource.data.data.matches('data:application/pdf;base64,[A-Za-z0-9+/=]+')));
+      }
+      allow read: if admin() || (membre() && resource.data.owner == moi());
+      allow create: if justifValide() && (admin()
+        || (membre() && request.resource.data.owner == moi() && avantOK() && apresOK()));
+      allow update: if justifValide() && (admin()
+        || (membre() && resource.data.owner == moi() && request.resource.data.owner == moi()
+            && avantOK() && apresOK()));
+      allow delete: if admin() || (membre() && resource.data.owner == moi() && avantOK());
+    }
+
+    // Réglages de l'application (société, catégories, barème IK, script, email) : lus par l'équipe, modifiés par les administrateurs
+    match /config/{doc} {
+      allow read: if membre() || admin();
+      // L'adresse du script ne peut pointer que vers un script Google Apps Script
+      allow write: if admin() && (request.resource.data.get('scriptUrl', '') == ''
+        || request.resource.data.scriptUrl.matches('https://script[.]google[.]com/macros/s/[A-Za-z0-9_-]+/exec'));
+    }
+
+    // Envois des notes par email : écrits par les administrateurs, lisibles par le déclarant concerné
+    match /envois/{id} {
+      allow read: if admin() || (membre() && resource.data.owner == moi());
+      allow write: if admin();
+    }
+
+    // Historique des remboursements : administrateurs uniquement
+    match /remboursements/{id} {
+      allow read, write: if admin();
+    }
+  }
+}
