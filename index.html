@@ -232,7 +232,7 @@ const SOCIETE_DEFAUT = {
 const SOCIETE = Object.assign({}, SOCIETE_DEFAUT);
 // Valeurs par défaut : société, script Google, email, lecture des tickets, catégories et barème IK
 // se règlent ensuite dans l'onglet Paramètres (administrateurs).
-const APP_VERSION = "1.10"; // à reporter aussi dans version.json
+const APP_VERSION = "1.11"; // à reporter aussi dans version.json
 </script>
 
 <!-- =====================================================================
@@ -664,7 +664,25 @@ function toast(msg, ko) {
   const t = $("#toast"); t.textContent = msg; t.className = "on" + (ko ? " ko" : "");
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.className = ""), 3200);
 }
+/* ---------- Coupure de la base locale (iPhone) ----------
+   Après un passage en arrière-plan, iOS peut fermer la base interne du navigateur (IndexedDB) :
+   Firebase s'arrête alors (« The client has already been terminated ») et plus rien ne passe.
+   Seul remède : recharger la page. Les saisies déjà gardées sur le téléphone ne sont pas perdues. */
+const COUPURE_RE = /terminated|indexed ?db|indexed database/i;
+const estCoupure = e => !!e && COUPURE_RE.test(String(e.message || e));
+function relancerApresCoupure() {
+  if (relancerApresCoupure.fait) return true;
+  let dernier = 0; try { dernier = +sessionStorage.getItem("nf_coupure") || 0; } catch (e) { }
+  if (Date.now() - dernier < 20e3) return false; // déjà rechargé il y a moins de 20 s : pas de boucle
+  relancerApresCoupure.fait = true;
+  ecrireSession("nf_coupure", String(Date.now()));
+  setTimeout(() => location.reload(), 1200);
+  return true;
+}
 function msgErreur(e) {
+  if (estCoupure(e)) return relancerApresCoupure()
+    ? "Connexion interrompue par le téléphone : l'application redémarre…"
+    : "Connexion interrompue par le téléphone : ferme complètement l'application puis rouvre-la.";
   const c = e && e.code || "";
   const M = {
     "auth/invalid-credential": "Email ou mot de passe incorrect.", "auth/wrong-password": "Email ou mot de passe incorrect.",
@@ -673,9 +691,16 @@ function msgErreur(e) {
     "auth/weak-password": "Mot de passe trop faible (8 caractères minimum).", "auth/invalid-email": "Adresse email invalide.",
     "auth/too-many-requests": "Trop de tentatives. Réessaie dans quelques minutes.",
     "auth/network-request-failed": "Pas de connexion internet.",
-    "permission-denied": "Action non autorisée.", "unavailable": "Service indisponible, vérifie ta connexion."
+    "permission-denied": "Action non autorisée.", "unavailable": "Service indisponible, vérifie ta connexion.",
+    "not-found": "Élément introuvable : il a peut-être déjà été supprimé.", "deadline-exceeded": "Le serveur met trop de temps à répondre, réessaie.",
+    "resource-exhausted": "Quota gratuit de la base atteint pour aujourd'hui, réessaie demain.", "unauthenticated": "Session expirée : reconnecte-toi.",
+    "cancelled": "Action annulée, réessaie.", "aborted": "Action interrompue, réessaie.", "already-exists": "Cet élément existe déjà.",
+    "invalid-argument": "Données refusées par le serveur (valeur invalide).", "failed-precondition": "Action impossible pour l'instant, réessaie.",
+    "internal": "Erreur du serveur, réessaie.", "unknown": "Erreur inconnue, réessaie."
   };
-  return M[c] || (e && e.message) || "Erreur inconnue";
+  if (M[c]) return M[c];
+  const m = e && e.message || "";
+  return /[àâçéèêëîïôûùœ]/i.test(m) || !/^[\x00-\x7F]*$/.test(m) || !m ? (m || "Erreur inconnue") : "Erreur : " + m; // messages techniques en anglais : préfixés en français
 }
 
 /* ---------- Icônes ---------- */
@@ -819,6 +844,14 @@ function demarrerControleVersion() {
   verifierVersion(true);
   setInterval(() => verifierVersion(), 10 * 60e3);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") verifierVersion(); });
+  // Retour au premier plan après un moment : vérifier que la base locale répond encore, sinon relancer tout de suite
+  let cache = 0;
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") { cache = Date.now(); return; }
+    if (!cache || Date.now() - cache < 15e3 || !db || !S.fbUser) return;
+    db.collection("config").doc("app").get({ source: "cache" }).catch(e => { if (estCoupure(e) && relancerApresCoupure()) toast("Reconnexion…"); });
+  });
+  window.addEventListener("unhandledrejection", ev => { if (estCoupure(ev.reason)) relancerApresCoupure(); });
   window.addEventListener("focus", () => verifierVersion());
 }
 
@@ -840,6 +873,8 @@ function init() {
   enregistrerServiceWorker();
   window.addEventListener("online", render); window.addEventListener("offline", render);
   auth.onAuthStateChanged(onAuth);
+  let coupure = null; try { coupure = sessionStorage.getItem("nf_coupure"); } catch (e) { }
+  if (coupure && Date.now() - +coupure < 60e3) setTimeout(() => toast("Connexion rétablie : tu peux refaire ton action ✓"), 1500);
 }
 function enregistrerServiceWorker() {
   if (!("serviceWorker" in navigator) || !/^https?:$/.test(location.protocol)) return;
