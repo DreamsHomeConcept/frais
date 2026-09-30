@@ -232,7 +232,7 @@ const SOCIETE_DEFAUT = {
 const SOCIETE = Object.assign({}, SOCIETE_DEFAUT);
 // Valeurs par défaut : société, script Google, email, lecture des tickets, catégories et barème IK
 // se règlent ensuite dans l'onglet Paramètres (administrateurs).
-const APP_VERSION = "1.9"; // à reporter aussi dans version.json
+const APP_VERSION = "1.10"; // à reporter aussi dans version.json
 </script>
 
 <!-- =====================================================================
@@ -402,8 +402,7 @@ const APP_VERSION = "1.9"; // à reporter aussi dans version.json
       if (t.date > aujourdhui) alertes.push("Date lue dans le futur (" + t.date.split("-").reverse().join("/") + ") : vérifie-la.");
       else { v.date = t.date; champs.push("date"); }
     }
-    const desc = [t.enseigne, t.description].map(x => typeof x === "string" ? x.trim() : "").filter(Boolean);
-    if (desc.length) { v.description = (desc.length === 2 && desc[1].toLowerCase().includes(desc[0].toLowerCase()) ? desc[1] : desc.join(" — ")).slice(0, 120); champs.push("description"); }
+    // La description n'est pas reprise du ticket : le déclarant l'écrit lui-même, en une phrase courte
     const cat = cats.find(c => c.id === t.categorie);
     if (cat) { v.categorie = cat.id; champs.push("categorie"); }
     if (t.paiement === "especes") { v.paiement = "especes"; champs.push("paiement"); }
@@ -1689,7 +1688,6 @@ function modalFrais(existant, pre) {
       const poser = (nom, val) => { if (val == null || touches.has(nom)) return false; f.elements[nom].value = val; remplis.push(nom); return true; };
       if (v.date) poser("date", v.date);
       if (v.categorie && !touches.has("categorie")) { f.categorie.value = v.categorie; remplis.push("categorie"); if (!touches.has("tauxTva")) f.tauxTva.value = String(NF.categorie(v.categorie).tva); }
-      if (v.description && !f.description.value.trim()) poser("description", v.description);
       if (v.paiement && !touches.has("paiement")) { const r = f.querySelector(`[name=paiement][value=${v.paiement}]`); if (r) { r.checked = true; remplis.push("paiement"); } }
       if (v.devise && !touches.has("devise")) { f.devise.value = v.devise; if (v.devise !== "EUR") remplis.push("devise"); }
       if (v.montantDevise != null && !f.montantDevise.value.trim()) poser("montantDevise", fmtSaisie(v.montantDevise));
@@ -1713,7 +1711,7 @@ function modalFrais(existant, pre) {
     if (existant && existant.justif) chargerJustif(existant.id).then(j => { if (st.justif === undefined) apercu(j); }).catch(() => apercu(null));
     if (pre) (pre.champs || []).forEach(marquer);
     majCalc();
-    if (pre && pre.valeurs.devise && pre.valeurs.devise !== "EUR") setTimeout(() => f.ttc.focus(), 250);
+    if (pre) setTimeout(() => (pre.valeurs.devise && pre.valeurs.devise !== "EUR" ? f.ttc : f.description).focus(), 250);
     f.addEventListener("submit", async ev => {
       ev.preventDefault();
       const errs = [];
@@ -2175,15 +2173,20 @@ async function genererPDF(owner, mois, opts = {}) {
   }));
   y = doc.lastAutoTable.finalY + 12;
 
-  // Signatures
-  if (y > 250) { doc.addPage(); y = 25; }
-  doc.setDrawColor(200, 196, 188); doc.setLineWidth(0.3);
-  [["Le déclarant", nomDe(owner)], ["Validation — Direction", ""]].forEach(([t, n], i) => {
-    const x = M + i * 94;
-    doc.roundedRect(x, y, 88, 30, 2, 2);
-    doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...NAVY); doc.text(t, x + 4, y + 6);
-    doc.setFont("helvetica", "normal"); doc.setTextColor(...GRIS); doc.setFontSize(8); doc.text(n ? n + " — date et signature" : "Date et signature", x + 4, y + 11);
-  });
+  // Mention de validation (à la place des cadres de signature)
+  if (y > 270) { doc.addPage(); y = 25; }
+  const retenues = R.frais.concat(R.ik).filter(d => d.statut !== "refusee");
+  const enAttente = retenues.filter(d => d.statut === "soumise").length;
+  const dateLocale = iso => { const t = new Date(iso); return isNaN(t) ? dateFr(iso) : t.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" }); };
+  let mention;
+  if (!retenues.length) mention = "Aucune dépense retenue : toutes les lignes ont été refusées.";
+  else if (enAttente) mention = `Validation en attente : ${enAttente} dépense${enAttente > 1 ? "s" : ""} à valider.`;
+  else {
+    const derniere = retenues.filter(d => d.valideLe).sort((a, b) => String(b.valideLe).localeCompare(String(a.valideLe)))[0];
+    mention = derniere ? `Validée dans l'application par ${derniere.validePar ? nomDe(derniere.validePar) : "la direction"} le ${dateLocale(derniere.valideLe)}.` : "Validée dans l'application.";
+  }
+  doc.setFont("helvetica", enAttente ? "italic" : "bold"); doc.setFontSize(9); doc.setTextColor(...(enAttente ? GRIS : NAVY));
+  doc.text(mention, M, y);
 
   // Annexes : justificatifs photo
   const avecJ = R.frais.filter(d => d.justif && d.statut !== "refusee");
