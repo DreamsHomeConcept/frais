@@ -25,6 +25,9 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scrollbar-gutter:stable} /* place de la barre de défilement toujours réservée : rien ne bouge d'une page à l'autre */
+/* iPhone (application installée) : sur une page plus courte que l'écran, Safari place le menu du bas trop haut
+   (de la hauteur de la barre d'état). Chaque page fait donc au moins la hauteur de l'écran, barre d'état comprise. */
+body{min-height:calc(100vh + env(safe-area-inset-top, 0px))}
 html,body{background:var(--bg);color:var(--txt);font-family:Manrope,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;-webkit-text-size-adjust:100%}
 body.noscroll{overflow:hidden}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -212,7 +215,7 @@ const SOCIETE_DEFAUT = {
 const SOCIETE = Object.assign({}, SOCIETE_DEFAUT);
 // Valeurs par défaut : société, script Google, email, lecture des tickets, catégories et barème IK
 // se règlent ensuite dans l'onglet Paramètres (administrateurs).
-const APP_VERSION = "1.6"; // à reporter aussi dans version.json
+const APP_VERSION = "1.7"; // à reporter aussi dans version.json
 </script>
 
 <!-- =====================================================================
