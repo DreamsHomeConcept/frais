@@ -139,6 +139,13 @@ table.tb{width:100%;border-collapse:collapse;font-size:13px}
 .fld input[type=date],.fld input[type=month]{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;text-align:left}
 .fld input::-webkit-date-and-time-value{text-align:left}
 .rowb>.fld{flex:0 1 auto;min-width:0;max-width:58%}
+/* Champ clé API : boutons Effacer et Afficher dans le champ */
+.cle-box{position:relative}
+.fld .cle-box input{padding-right:92px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px}
+.cle-btns{position:absolute;top:0;right:4px;bottom:0;display:flex;align-items:center;gap:2px}
+.cle-btns button{width:40px;height:40px;border:0;background:transparent;border-radius:8px;color:var(--mut);font-size:17px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.cle-btns button:hover,.cle-btns button:focus-visible{background:#F2EFE9;color:var(--navy)}
+.cle-btns button[hidden]{display:none}
 .rowb>.fld input[type=month]{width:11.5em}
 .lecture{display:flex;align-items:center;gap:10px;font-weight:600}
 .lecture .spin{width:22px;height:22px;margin:0;border-width:2.5px;flex:none}
@@ -225,7 +232,7 @@ const SOCIETE_DEFAUT = {
 const SOCIETE = Object.assign({}, SOCIETE_DEFAUT);
 // Valeurs par défaut : société, script Google, email, lecture des tickets, catégories et barème IK
 // se règlent ensuite dans l'onglet Paramètres (administrateurs).
-const APP_VERSION = "1.8"; // à reporter aussi dans version.json
+const APP_VERSION = "1.9"; // à reporter aussi dans version.json
 </script>
 
 <!-- =====================================================================
@@ -1324,9 +1331,10 @@ async function rafraichirStatut(silencieux) {
   catch (e) { S.scriptStatut = { erreur: e.message }; if (!silencieux) toast(e.message, true); }
   render();
 }
-function modalForm(titre, champsHtml, surValider, libBouton) {
+function modalForm(titre, champsHtml, surValider, libBouton, apres) {
   ouvrirModal(titre, `<form class="f" id="f-param" novalidate>${champsHtml}<div id="f-err"></div><button class="btn full" id="btn-save">${libBouton || "Enregistrer"}</button></form>`, m => {
     const f = $("#f-param", m);
+    if (apres) apres(f, m);
     f.addEventListener("submit", async ev => {
       ev.preventDefault();
       const btn = $("#btn-save", m); btn.disabled = true; const txt = btn.textContent; btn.textContent = "Enregistrement…";
@@ -1368,14 +1376,28 @@ function modalScript() {
 }
 function modalCle() {
   modalForm("Clé API Claude", `<ol class="mut steps"><li>Va sur <b>console.anthropic.com</b> → <b>API Keys</b> → <b>Create Key</b>.</li><li>Ajoute du crédit dans <b>Billing</b> (5 € suffisent pour des centaines de tickets).</li><li>Colle la clé ci-dessous : elle est testée avant d'être enregistrée.</li></ol>
-    <div class="fld"><label>Clé (commence par sk-ant-)</label><input name="cle" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…"></div>`, async f => {
-    const cle = f.cle.value.trim();
+    <div class="fld"><label for="f-cle">Clé (commence par sk-ant-)</label><div class="cle-box"><input id="f-cle" name="cle" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-…">
+    <span class="cle-btns"><button type="button" data-cle="voir" aria-label="Afficher la clé" title="Afficher la clé">👁</button><button type="button" data-cle="effacer" aria-label="Effacer" title="Effacer" hidden>✕</button></span></div></div>`, async f => {
+    const cle = f.cle.value.replace(/\s+/g, ""); // espaces ou retours à la ligne collés par erreur
+    f.cle.value = cle;
     if (!/^sk-ant-/.test(cle)) throw new Error("La clé doit commencer par sk-ant-");
     S.scriptStatut = await appelScript("reglages", { cleApi: cle }, 60000);
     f.cle.value = "";
     if (!S.config.ocr.actif) await sauverConfig({ ocr: Object.assign({}, S.config.ocr, { actif: true }) });
     return "Clé enregistrée et testée ✓";
-  }, "Tester et enregistrer");
+  }, "Tester et enregistrer", f => {
+    const champ = f.cle, voir = $('[data-cle="voir"]', f), effacer = $('[data-cle="effacer"]', f);
+    const maj = () => { effacer.hidden = !champ.value; };
+    champ.addEventListener("input", maj);
+    effacer.addEventListener("click", () => { champ.value = ""; maj(); const e = $("#f-err", f); if (e) e.innerHTML = ""; champ.focus(); });
+    voir.addEventListener("click", () => {
+      const cache = champ.type === "password";
+      champ.type = cache ? "text" : "password";
+      voir.textContent = cache ? "🙈" : "👁";
+      voir.setAttribute("aria-label", cache ? "Masquer la clé" : "Afficher la clé"); voir.title = voir.getAttribute("aria-label");
+      champ.focus();
+    });
+  });
 }
 function modalPlafond() {
   const p = S.scriptStatut && S.scriptStatut.plafond || S.config.ocr.plafond;
