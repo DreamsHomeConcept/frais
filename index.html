@@ -133,6 +133,17 @@ table.tb{width:100%;border-collapse:collapse;font-size:13px}
 .fld input:focus,.fld select:focus,.fld textarea:focus{border-color:var(--beige)}
 .fld input[readonly]{background:#F7F6F3;color:var(--mut)}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+/* Ligne Date + Catégorie/Véhicule : date sur 1/3, liste sur 2/3 */
+.g2.g-date{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}
+/* Date courte jj/mm/aa sur téléphone : le texte est affiché par-dessus le champ natif (calendrier iOS conservé) */
+.dcourt{position:relative}
+.dcourt-txt{display:none}
+@media (pointer:coarse){
+  .dcourt input{color:transparent;-webkit-text-fill-color:transparent}
+  .dcourt input::-webkit-datetime-edit{opacity:0}
+  .dcourt-txt{display:flex;align-items:center;position:absolute;left:0;right:0;top:0;bottom:0;padding:0 12px;font-size:16px;color:var(--navy);pointer-events:none;white-space:nowrap}
+  .dcourt-txt.vide{color:var(--mut)}
+}
 .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 /* iPhone : les champs date et mois natifs débordaient de leur colonne */
 .fld,.g2>*,.g3>*{min-width:0}
@@ -232,7 +243,7 @@ const SOCIETE_DEFAUT = {
 const SOCIETE = Object.assign({}, SOCIETE_DEFAUT);
 // Valeurs par défaut : société, script Google, email, lecture des tickets, catégories et barème IK
 // se règlent ensuite dans l'onglet Paramètres (administrateurs).
-const APP_VERSION = "1.11"; // à reporter aussi dans version.json
+const APP_VERSION = "1.12"; // à reporter aussi dans version.json
 </script>
 
 <!-- =====================================================================
@@ -650,6 +661,12 @@ const pad = n => String(n).padStart(2, "0");
 const isoDate = d => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
 const aujourdhui = () => isoDate(new Date());
 const maintenant = () => new Date().toISOString();
+const dateCourte = iso => /^\d{4}-\d{2}-\d{2}/.test(iso || "") ? iso.slice(8, 10) + "/" + iso.slice(5, 7) + "/" + iso.slice(2, 4) : "jj/mm/aa";
+function majDateCourte(inp) {
+  const t = inp && inp.parentNode && inp.parentNode.querySelector(".dcourt-txt"); if (!t) return;
+  t.textContent = dateCourte(inp.value); t.classList.toggle("vide", !inp.value);
+}
+["input", "change", "blur"].forEach(ev => document.addEventListener(ev, e => { if (e.target.matches && e.target.matches(".dcourt input")) majDateCourte(e.target); }, true));
 const dateFr = iso => iso ? String(iso).slice(0, 10).split("-").reverse().join("/") : "";
 const libMois = m => { if (!m) return ""; const [y, mo] = m.split("-"); const s = new Date(+y, +mo - 1, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }); return s.charAt(0).toUpperCase() + s.slice(1); };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1637,8 +1654,8 @@ function modalFrais(existant, pre) {
   <form class="f" id="f-frais" novalidate>
     ${existant && existant.statut === "refusee" ? `<div class="err">Refusée : ${esc(existant.motifRefus || "")}<br><span style="font-weight:500">La modification la renverra en validation.</span></div>` : ""}
     ${pre ? `<div class="${pre.ia ? "info ia-box" : "err"}">${pre.ia ? `✨ <b>Lu par Claude</b> : vérifie les champs surlignés avant de soumettre.` : ""}${pre.alertes.length ? `<ul>${pre.alertes.map(a => `<li>${esc(a)}</li>`).join("")}</ul>` : ""}</div>` : ""}
-    <div class="g2">
-      <div class="fld"><label>Date</label><input type="date" name="date" value="${esc(d.date)}" max="${aujourdhui()}" required></div>
+    <div class="g2 g-date">
+      <div class="fld"><label>Date</label><div class="dcourt"><input type="date" name="date" value="${esc(d.date)}" max="${aujourdhui()}" required><span class="dcourt-txt" aria-hidden="true">${esc(dateCourte(d.date))}</span></div></div>
       <div class="fld"><label>Catégorie</label><select name="categorie">${NF.CATEGORIES.filter(c => !c.masque || c.id === d.categorie).map(c => `<option value="${esc(c.id)}" ${c.id === d.categorie ? "selected" : ""}>${esc(c.ico)} ${esc(c.lib)}</option>`).join("")}</select></div>
     </div>
     <div class="fld"><label>Description</label><input name="description" value="${esc(d.description || "")}" placeholder="Ex. Déjeuner équipe chantier, fournisseur…" maxlength="120" required></div>
@@ -1720,7 +1737,7 @@ function modalFrais(existant, pre) {
       catch (e) { if (id === lectureId && m.isConnected) zoneLecture.innerHTML = `<div class="err">Lecture impossible : ${esc(e.message)}. Complète le formulaire à la main.</div>`; return; }
       if (id !== lectureId || !m.isConnected || !$("#f-frais", m)) return;
       const v = n.v, remplis = [];
-      const poser = (nom, val) => { if (val == null || touches.has(nom)) return false; f.elements[nom].value = val; remplis.push(nom); return true; };
+      const poser = (nom, val) => { if (val == null || touches.has(nom)) return false; f.elements[nom].value = val; if (nom === "date") majDateCourte(f.date); remplis.push(nom); return true; };
       if (v.date) poser("date", v.date);
       if (v.categorie && !touches.has("categorie")) { f.categorie.value = v.categorie; remplis.push("categorie"); if (!touches.has("tauxTva")) f.tauxTva.value = String(NF.categorie(v.categorie).tva); }
       if (v.paiement && !touches.has("paiement")) { const r = f.querySelector(`[name=paiement][value=${v.paiement}]`); if (r) { r.checked = true; remplis.push("paiement"); } }
@@ -1790,8 +1807,8 @@ function modalIK(existant) {
   ouvrirModal(existant ? "Modifier le trajet" : "Nouveau trajet", `
   <form class="f" id="f-ik" novalidate>
     ${existant && existant.statut === "refusee" ? `<div class="err">Refusé : ${esc(existant.motifRefus || "")}<br><span style="font-weight:500">La modification le renverra en validation.</span></div>` : ""}
-    <div class="g2">
-      <div class="fld"><label>Date</label><input type="date" name="date" value="${esc(d.date)}" max="${aujourdhui()}" required></div>
+    <div class="g2 g-date">
+      <div class="fld"><label>Date</label><div class="dcourt"><input type="date" name="date" value="${esc(d.date)}" max="${aujourdhui()}" required><span class="dcourt-txt" aria-hidden="true">${esc(dateCourte(d.date))}</span></div></div>
       <div class="fld"><label>Véhicule</label><select name="vehiculeId">${V.map(v => `<option value="${esc(v.id)}" ${v.id === d.vehiculeId ? "selected" : ""}>${esc(v.libelle)} · ${esc(NF.cvLib(v.cv))}</option>`).join("")}</select></div>
     </div>
     <div class="g2">
