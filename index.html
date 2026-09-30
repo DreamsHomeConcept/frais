@@ -134,6 +134,16 @@ table.tb{width:100%;border-collapse:collapse;font-size:13px}
 .fld input[readonly]{background:#F7F6F3;color:var(--mut)}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+/* iPhone : les champs date et mois natifs débordaient de leur colonne */
+.fld,.g2>*,.g3>*{min-width:0}
+.fld input[type=date],.fld input[type=month]{-webkit-appearance:none;appearance:none;display:block;min-width:0;max-width:100%;text-align:left}
+.fld input::-webkit-date-and-time-value{text-align:left}
+.rowb>.fld{flex:0 1 auto;min-width:0;max-width:58%}
+.rowb>.fld input[type=month]{width:11.5em}
+.lecture{display:flex;align-items:center;gap:10px;font-weight:600}
+.lecture .spin{width:22px;height:22px;margin:0;border-width:2.5px;flex:none}
+.item.off{opacity:.75;cursor:pointer}
+.item.off .s{white-space:normal}
 .chk{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600}
 .chk input{width:20px;height:20px;accent-color:var(--beige)}
 .fld label.chk{display:flex;margin:0;font-size:14px}
@@ -215,7 +225,7 @@ const SOCIETE_DEFAUT = {
 const SOCIETE = Object.assign({}, SOCIETE_DEFAUT);
 // Valeurs par défaut : société, script Google, email, lecture des tickets, catégories et barème IK
 // se règlent ensuite dans l'onglet Paramètres (administrateurs).
-const APP_VERSION = "1.7"; // à reporter aussi dans version.json
+const APP_VERSION = "1.8"; // à reporter aussi dans version.json
 </script>
 
 <!-- =====================================================================
@@ -1478,7 +1488,8 @@ function fermerModal() {
 function modalNouveau() {
   ouvrirModal("Ajouter", `<div class="f">
     ${ocrDispo() ? `<label class="item scan-item"><div class="ico">📷</div><div class="mid"><div class="t">Scanner un ticket</div><div class="s">Prends la photo : Claude remplit la dépense</div></div><input type="file" accept="image/*" capture="environment" hidden data-scan></label>
-    <label class="lnk" style="text-align:center;cursor:pointer">ou choisir une photo existante<input type="file" accept="image/*" hidden data-scan></label>` : ""}
+    <label class="lnk" style="text-align:center;cursor:pointer">ou choisir une photo existante<input type="file" accept="image/*" hidden data-scan></label>`
+    : S.admin ? `<button class="item off" data-act="ocr-param"><div class="ico">📷</div><div class="mid"><div class="t">Scanner un ticket</div><div class="s">Lecture automatique non activée · <u>l'activer dans Paramètres</u></div></div></button>` : ""}
     <button class="item" data-act="form-frais"><div class="ico">🧾</div><div class="mid"><div class="t">Dépense</div><div class="s">Ticket, facture — avance perso ou espèces</div></div></button>
     <button class="item" data-act="form-ik"><div class="ico">🚗</div><div class="mid"><div class="t">Trajet (indemnités km)</div><div class="s">Véhicule personnel, barème fiscal</div></div></button>
   </div>`);
@@ -1492,6 +1503,12 @@ async function imagePourLecture(file) {
   const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height);
   return c.toDataURL("image/jpeg", 0.85).split(",")[1];
 }
+// Envoie la photo à Claude (script Google) et renvoie les champs lus, contrôlés
+async function lireTicketIA(file) {
+  const image = await imagePourLecture(file);
+  const r = await appelScript("lire-ticket", { image, mime: "image/jpeg", categories: NF.categoriesVisibles().map(c => ({ id: c.id, lib: c.lib })) }, 45000);
+  return NF.normaliserTicket(r.ticket, { aujourdhui: aujourdhui() });
+}
 let _scanId = 0;
 async function scannerTicket(file) {
   const id = ++_scanId;
@@ -1503,9 +1520,7 @@ async function scannerTicket(file) {
   } catch (e) { fermerModal(); toast(e.message, true); return; }
   let pre;
   try {
-    const image = await imagePourLecture(file);
-    const r = await appelScript("lire-ticket", { image, mime: "image/jpeg", categories: NF.categoriesVisibles().map(c => ({ id: c.id, lib: c.lib })) }, 45000);
-    const n = NF.normaliserTicket(r.ticket, { aujourdhui: aujourdhui() });
+    const n = await lireTicketIA(file);
     pre = { valeurs: n.v, champs: n.champs, alertes: n.alertes, justif, ia: true };
   } catch (e) {
     pre = { valeurs: {}, champs: [], alertes: ["Lecture impossible : " + e.message + ". Complète le formulaire à la main."], justif, ia: false };
@@ -1592,6 +1607,7 @@ function modalFrais(existant, pre) {
         <label class="btn sm sec">📁 Fichier<input type="file" accept="image/*,application/pdf" hidden data-justif></label>
         <button type="button" class="btn sm sec ${(existant && existant.justif) || (pre && pre.justif) ? "" : "hidden"}" id="btn-suppr-justif">Retirer</button>
       </div></div></div>
+    <div id="f-lecture"></div>
     <label class="chk"><input type="checkbox" name="sansJustif" ${d.sansJustificatif ? "checked" : ""}> Pas de justificatif (TVA non récupérable)</label>
     <div id="f-err"></div>
     <button class="btn full" id="btn-save">${existant ? "Enregistrer et soumettre" : "Soumettre la dépense"}</button>
@@ -1626,24 +1642,54 @@ function modalFrais(existant, pre) {
     f.tva.addEventListener("input", () => { st.tvaManuelle = true; majCalc(); });
     f.sansJustif.addEventListener("change", majCalc);
     const apercu = j => { $("#apercu-justif", m).innerHTML = blocJustif(j); $("#btn-suppr-justif", m).classList.toggle("hidden", !j); };
+    // Champs modifiés à la main : la lecture par Claude ne les écrase jamais
+    const touches = new Set();
+    ["input", "change"].forEach(t => f.addEventListener(t, ev => { if (ev.isTrusted && ev.target.name) touches.add(ev.target.name); }));
+    const marquer = n => {
+      const el = f.elements[n]; if (!el) return;
+      const cible = el instanceof RadioNodeList ? el[0].closest(".seg") : el;
+      if (!cible) return;
+      cible.classList.add("ia");
+      const off = () => cible.classList.remove("ia");
+      (el instanceof RadioNodeList ? Array.from(el) : [el]).forEach(x => { x.addEventListener("input", off); x.addEventListener("change", off); });
+    };
+    const zoneLecture = $("#f-lecture", m);
+    let lectureId = 0;
+    // Photo ajoutée dans le formulaire : lecture automatique si elle est activée (nouvelle dépense uniquement)
+    async function lireDepuisFormulaire(file) {
+      const id = ++lectureId;
+      zoneLecture.innerHTML = `<div class="info lecture"><div class="spin"></div>Claude lit le ticket…</div>`;
+      let n;
+      try { n = await lireTicketIA(file); }
+      catch (e) { if (id === lectureId && m.isConnected) zoneLecture.innerHTML = `<div class="err">Lecture impossible : ${esc(e.message)}. Complète le formulaire à la main.</div>`; return; }
+      if (id !== lectureId || !m.isConnected || !$("#f-frais", m)) return;
+      const v = n.v, remplis = [];
+      const poser = (nom, val) => { if (val == null || touches.has(nom)) return false; f.elements[nom].value = val; remplis.push(nom); return true; };
+      if (v.date) poser("date", v.date);
+      if (v.categorie && !touches.has("categorie")) { f.categorie.value = v.categorie; remplis.push("categorie"); if (!touches.has("tauxTva")) f.tauxTva.value = String(NF.categorie(v.categorie).tva); }
+      if (v.description && !f.description.value.trim()) poser("description", v.description);
+      if (v.paiement && !touches.has("paiement")) { const r = f.querySelector(`[name=paiement][value=${v.paiement}]`); if (r) { r.checked = true; remplis.push("paiement"); } }
+      if (v.devise && !touches.has("devise")) { f.devise.value = v.devise; if (v.devise !== "EUR") remplis.push("devise"); }
+      if (v.montantDevise != null && !f.montantDevise.value.trim()) poser("montantDevise", fmtSaisie(v.montantDevise));
+      if (v.ttc != null && !f.ttc.value.trim()) {
+        poser("ttc", fmtSaisie(v.ttc));
+        if (v.tauxTva != null && !touches.has("tauxTva")) { f.tauxTva.value = String(v.tauxTva); remplis.push("tauxTva"); }
+        if (v.tva != null && !touches.has("tva")) { f.tva.value = fmtSaisie(v.tva); st.tvaManuelle = true; remplis.push("tva"); } else st.tvaManuelle = false;
+      }
+      majCalc();
+      remplis.forEach(marquer);
+      zoneLecture.innerHTML = `<div class="info ia-box">✨ <b>Lu par Claude</b> : ${remplis.length ? "vérifie les champs surlignés avant de soumettre." : "aucun champ vide à compléter."}${n.alertes.length ? `<ul>${n.alertes.map(a => `<li>${esc(a)}</li>`).join("")}</ul>` : ""}</div>`;
+    }
     $$("[data-justif]", m).forEach(inp => inp.addEventListener("change", async () => {
       const file = inp.files && inp.files[0]; inp.value = ""; if (!file) return;
       $("#apercu-justif", m).innerHTML = `<div class="spin"></div>`;
       try { st.justif = await preparerJustif(file); apercu(st.justif); f.sansJustif.checked = false; majCalc(); }
-      catch (e) { apercu(null); st.justif = undefined; $("#f-err", m).innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+      catch (e) { apercu(null); st.justif = undefined; $("#f-err", m).innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+      if (!existant && ocrDispo() && st.justif.mime !== "application/pdf") lireDepuisFormulaire(file);
     }));
     $("#btn-suppr-justif", m).addEventListener("click", () => { st.justif = null; apercu(null); });
     if (existant && existant.justif) chargerJustif(existant.id).then(j => { if (st.justif === undefined) apercu(j); }).catch(() => apercu(null));
-    if (pre) {
-      (pre.champs || []).forEach(n => {
-        const el = f.elements[n]; if (!el) return;
-        const cible = el instanceof RadioNodeList ? el[0].closest(".seg") : el;
-        if (!cible) return;
-        cible.classList.add("ia");
-        const off = () => cible.classList.remove("ia");
-        (el instanceof RadioNodeList ? Array.from(el) : [el]).forEach(x => { x.addEventListener("input", off); x.addEventListener("change", off); });
-      });
-    }
+    if (pre) (pre.champs || []).forEach(marquer);
     majCalc();
     if (pre && pre.valeurs.devise && pre.valeurs.devise !== "EUR") setTimeout(() => f.ttc.focus(), 250);
     f.addEventListener("submit", async ev => {
@@ -2197,6 +2243,7 @@ document.addEventListener("click", async ev => {
       case "maj-recharger": if (MAJ.dispo) recharger(MAJ.dispo); break;
       case "maj-forcee": recharger(S.config.versionMin || APP_VERSION); break;
       case "p-vmin": modalVersionMin(); break;
+      case "ocr-param": fermerModal(); S.tab = "parametres"; S.paramTab = "ocr"; render(); window.scrollTo(0, 0); break;
       case "p-tab": S.paramTab = el.dataset.t; render(); break;
       case "p-societe": modalSociete(); break;
       case "p-script": modalScript(); break;
