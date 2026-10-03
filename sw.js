@@ -3,7 +3,7 @@
  * - Logos, icônes, bibliothèques (Firebase, PDF, police) : copie locale d'abord.
  * - Base de données et connexion (googleapis.com) : jamais interceptées, Firebase gère lui-même le hors ligne.
  */
-const CACHE = "frais-v1";
+const CACHE = "frais-v2"; // à changer quand les icônes ou logos changent
 const PAGE = new URL("./", self.registration.scope).href;
 const FICHIERS = ["logo-mark.png", "logo-auth.png", "logo-pdf.png", "favicon.png", "apple-touch-icon.png", "manifest.webmanifest"];
 const BIBLIOTHEQUES = [
